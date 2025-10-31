@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    APP_ENV = "local"
     PORT = int(os.getenv("PORT", 8000))
     MONGO_URI = os.getenv("MONGO_URI")
     JWT_SECRET = os.getenv("JWT_SECRET")
