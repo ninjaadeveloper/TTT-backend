@@ -3,23 +3,26 @@ import requests
 import time
 from datetime import datetime
 
+from core.meeting_url_handler import download_meeting_audio  # ✅ new import
 from core.providers import call_llm
 from core.utils import extract_audio_from_video, translate_text, optimize_for_tokens
 from config import Config
 from models.mongo_models import uploads, notes
 
-
 ASSEMBLY_HEADERS = {"authorization": Config.SPEECH_API_KEY}
+
+# ✅ Safe set of supported language codes by AssemblyAI
+SUPPORTED_LANG_CODES = [
+    "en", "es", "fr", "de", "it", "pt", "nl",
+    "ja", "ko", "zh", "hi", "ar", "ru", "tr", "vi"
+]
 
 
 def upload_to_assemblyai(file_path: str) -> str:
-    """
-    Uploads local audio/video file to AssemblyAI and returns upload_url.
-    If file_path is already a URL, just return it.
-    """
+    """Uploads local audio/video file to AssemblyAI and returns upload_url.
+    If file_path is already a URL, just return it."""
     if file_path.startswith("http://") or file_path.startswith("https://"):
-        # Already a remote URL (Zoom/Meet/AssemblyAI etc.)
-        return file_path
+        return file_path  # Already a remote URL
 
     headers = {"authorization": Config.SPEECH_API_KEY}
     with open(file_path, "rb") as f:
@@ -33,12 +36,16 @@ def upload_to_assemblyai(file_path: str) -> str:
         return response.json()["upload_url"]
 
 
-# --- Transcribe when we already have an AssemblyAI upload_url ---
 def transcribe_with_assemblyai_url(audio_url: str, language: str = "auto"):
     endpoint = "https://api.assemblyai.com/v2/transcript"
-    json_data = {"audio_url": audio_url, "language_detection": True}
-    if language and language != "auto":
-        json_data["language_code"] = language
+
+    # ✅ Build safe payload
+    if language and language.lower() != "auto" and language.lower() in SUPPORTED_LANG_CODES:
+        json_data = {"audio_url": audio_url, "language_code": language.lower()}
+    else:
+        json_data = {"audio_url": audio_url, "language_detection": True}
+
+    print(f"🧠 [AssemblyAI] Request: {json_data}")
 
     r = requests.post(endpoint, headers=ASSEMBLY_HEADERS, json=json_data, timeout=60)
     r.raise_for_status()
@@ -50,50 +57,51 @@ def transcribe_with_assemblyai_url(audio_url: str, language: str = "auto"):
         res.raise_for_status()
         data = res.json()
         if data["status"] == "completed":
+            print(f"✅ [AssemblyAI] Transcription completed. Detected: {data.get('language_code')}")
             return data["text"], data.get("language_code", "auto")
         elif data["status"] == "error":
             raise RuntimeError(f"AssemblyAI error: {data['error']}")
         time.sleep(2)
 
 
-# --- Fallback (mock/local) ---
 def transcribe_local(filepath):
+    """Fallback dummy transcription (for testing only)."""
     return "Dummy transcript (replace with actual STT)", "en"
 
 
 def transcribe(file_or_url: str, language: str = None, is_url: bool = False):
-    """
-    Unified transcription handler (local file, remote URL, or pre-uploaded AssemblyAI URL).
-    """
-    # 1. Get upload_url (skip if already URL)
+    """Unified transcription handler (local file, remote URL, or pre-uploaded URL)."""
     upload_url = upload_to_assemblyai(file_or_url)
 
-    # 2. Request transcription
     endpoint = "https://api.assemblyai.com/v2/transcript"
     headers = {"authorization": Config.SPEECH_API_KEY}
-    json_data = {"audio_url": upload_url, "language_detection": True}
-    if language and language != "auto":
-        json_data["language_code"] = language
+
+    if language and language.lower() != "auto" and language.lower() in SUPPORTED_LANG_CODES:
+        json_data = {"audio_url": upload_url, "language_code": language.lower()}
+    else:
+        json_data = {"audio_url": upload_url, "language_detection": True}
+
+    print(f"🧠 [Transcribe] Sending to AssemblyAI: {json_data}")
 
     transcript_res = requests.post(endpoint, headers=headers, json=json_data, timeout=30)
     transcript_res.raise_for_status()
     transcript_id = transcript_res.json()["id"]
 
-    # 3. Poll until done
     status_endpoint = f"{endpoint}/{transcript_id}"
     while True:
         poll_res = requests.get(status_endpoint, headers=headers, timeout=30)
         poll_res.raise_for_status()
         data = poll_res.json()
         if data["status"] == "completed":
+            print(f"✅ [Transcribe] Completed. Language: {data.get('language_code')}")
             return data["text"], data.get("language_code", "auto")
         elif data["status"] == "error":
             raise RuntimeError(f"AssemblyAI error: {data['error']}")
         time.sleep(2)
 
 
-# --- Clean transcript ---
 def clean_text(text):
+    """Remove filler words and extra whitespace."""
     if not text:
         return text
     for w in [" um ", " uh ", " you know ", " like "]:
@@ -101,8 +109,8 @@ def clean_text(text):
     return " ".join(text.split())
 
 
-# --- Summarization ---
 def generate_notes(transcript):
+    """Generate AI-based structured meeting notes."""
     prompt = f"""You are an advanced multilingual meeting summarizer.
 The transcript may not always be in English, but the final notes must be in **English**.
 
@@ -133,8 +141,8 @@ Transcript extract:
     return call_llm(prompt)
 
 
-# --- Progress helper ---
 def set_progress(upload_id, stage, percent):
+    """Helper to update progress safely."""
     try:
         uploads.update_one(
             {"_id": upload_id},
@@ -147,48 +155,51 @@ def set_progress(upload_id, stage, percent):
         pass
 
 
-# --- Main pipeline ---
 def process_upload(upload_id, file_path_or_url, user_id, language="auto", is_url=False):
-    """
-    file_path_or_url -> can be:
-        - local audio file
-        - local video file
-        - external meeting URL (e.g. YouTube, Zoom recording link)
-    """
+    """Main processing pipeline for uploads."""
     try:
-        set_progress(upload_id, "processing", 5)
+        # 🆕 Handle Meeting URLs first
+        if is_url:
+            set_progress(upload_id, "downloading", 5)
+            print(f"🧠 [Meeting URL] Downloading audio from: {file_path_or_url}")
+            file_path_or_url = download_meeting_audio(file_path_or_url)
+            is_url = False  # ab ye local file ban gaya
+            set_progress(upload_id, "downloaded", 10)
+            print(f"✅ [Meeting URL] Audio downloaded: {file_path_or_url}")
 
-        # 1. Handle MP4 (extract first 2 minutes of audio)
+        set_progress(upload_id, "processing", 15)
+
+        # 1️⃣ Extract audio if video
         if not is_url and file_path_or_url.lower().endswith(".mp4"):
-            set_progress(upload_id, "extracting", 10)
+            set_progress(upload_id, "extracting", 20)
             audio_path = file_path_or_url.rsplit(".", 1)[0] + "_2min.mp3"
             file_path_or_url = extract_audio_from_video(file_path_or_url, audio_path, duration=120)
-            set_progress(upload_id, "extracted", 20)
+            set_progress(upload_id, "extracted", 30)
 
-        # 2. Transcribe
-        set_progress(upload_id, "transcribing", 30)
+        # 2️⃣ Transcribe
+        set_progress(upload_id, "transcribing", 40)
         transcript, detected_lang = transcribe(file_path_or_url, is_url=is_url, language=language)
-        set_progress(upload_id, "transcribed", 45)
+        set_progress(upload_id, "transcribed", 55)
 
-        # 3. Translate if not English
-        if detected_lang.lower() != "en":
-            set_progress(upload_id, "translating", 55)
+        # 3️⃣ Translate if not English
+        if detected_lang and detected_lang.lower() != "en":
+            set_progress(upload_id, "translating", 65)
             translated = translate_text(transcript, src=detected_lang, target="en")
-            set_progress(upload_id, "translated", 65)
+            set_progress(upload_id, "translated", 75)
         else:
             translated = transcript
 
-        # 4. Clean + optimize
+        # 4️⃣ Clean + optimize
         cleaned = clean_text(translated)
         cleaned = optimize_for_tokens(cleaned, max_tokens=3000)
-        set_progress(upload_id, "optimized", 75)
+        set_progress(upload_id, "optimized", 85)
 
-        # 5. Summarize
-        set_progress(upload_id, "summarizing", 85)
+        # 5️⃣ Generate notes
+        set_progress(upload_id, "summarizing", 90)
         notes_text = generate_notes(cleaned)
         set_progress(upload_id, "summarized", 95)
 
-        # 6. Save DB
+        # 6️⃣ Save result to DB
         note_doc = {
             "user_id": user_id,
             "upload_id": upload_id,
@@ -205,13 +216,15 @@ def process_upload(upload_id, file_path_or_url, user_id, language="auto", is_url
             {"_id": upload_id},
             {"$set": {
                 "status": "done",
-                "note_id": str(res.inserted_id),   # 👈 yaha bhi string
+                "note_id": str(res.inserted_id),
                 "progress": {"stage": "done", "percent": 100}
             }}
         )
+
         return {"note_id": str(res.inserted_id)}
 
     except Exception as e:
+        print(f"❌ [Process Upload] Failed for {upload_id}: {str(e)}")
         uploads.update_one(
             {"_id": upload_id},
             {"$set": {"status": "failed", "error": str(e)}}
