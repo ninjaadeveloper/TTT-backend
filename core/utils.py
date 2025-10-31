@@ -1,16 +1,23 @@
 import os
+import re
 import requests
-# from fpdf import FPDF
 from docx import Document
+from docx.shared import Pt
 from moviepy.editor import VideoFileClip
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+
 
 # --- Font setup for PDF (Unicode safe) ---
 FONT_DIR = "storage/fonts"
 FONT_PATH = os.path.join(FONT_DIR, "NotoSans.ttf")
+
 
 def ensure_font():
     """Download NotoSans variable font from Google Fonts repo if not available."""
@@ -24,69 +31,109 @@ def ensure_font():
             f.write(r.content)
         print("✅ NotoSans font downloaded!")
 
-# # --- Export Notes to PDF ---
-# def export_to_pdf(notes_text, output_path):
-#     ensure_font()
-#     pdf = FPDF()
-#     pdf.add_page()
 
-#     # Register and set Unicode font
-#     pdf.add_font("NotoSans", "", FONT_PATH, uni=True)
-#     pdf.set_font("NotoSans", size=12)
-
-#     # Accept string or list
-#     if isinstance(notes_text, str):
-#         lines = notes_text.split("\n")
-#     else:
-#         lines = list(notes_text)
-
-#     for line in lines:
-#         pdf.multi_cell(0, 10, str(line))
-#         pdf.multi_cell(0, 10, line.encode("latin-1", "replace").decode("latin-1"))
-
+# --- Export Notes to PDF (Enhanced) ---
 def export_to_pdf(notes_text, output_path):
     """
-    Stable PDF export using reportlab (Unicode + Urdu supported).
+    Enhanced PDF export – supports ## headings, - bullets, numbered lists, and normal text.
     """
-    # Font register (Urdu / Arabic ke liye MSung-Light or STSong-Light bhi use ho sakta hai)
-    pdfmetrics.registerFont(UnicodeCIDFont('HeiseiMin-W3'))  # universal Unicode font
-
-    c = canvas.Canvas(output_path, pagesize=A4)
-    width, height = A4
-    c.setFont("HeiseiMin-W3", 12)
-
-    # Accept string ya list
-    lines = notes_text.split("\n") if isinstance(notes_text, str) else list(notes_text)
-
-    y = height - 50
-    for line in lines:
-        if y < 50:  # page break
-            c.showPage()
-            c.setFont("HeiseiMin-W3", 12)
-            y = height - 50
-        c.drawString(50, y, line)
-        y -= 20
-
-    c.save()
-    return output_path
-
-    # ensure directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    pdf.output(output_path)
+    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))  # Unicode safe
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        rightMargin=50,
+        leftMargin=50,
+        topMargin=50,
+        bottomMargin=50,
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    heading_style = ParagraphStyle(
+        "Heading",
+        parent=styles["Heading2"],
+        fontName="HeiseiMin-W3",
+        fontSize=14,
+        leading=18,
+        spaceAfter=10,
+        textColor=colors.HexColor("#222222"),
+    )
+
+    body_style = ParagraphStyle(
+        "Body",
+        parent=styles["Normal"],
+        fontName="HeiseiMin-W3",
+        fontSize=12,
+        leading=16,
+        spaceAfter=8,
+    )
+
+    bullet_style = ParagraphStyle(
+        "Bullet",
+        parent=styles["Normal"],
+        fontName="HeiseiMin-W3",
+        fontSize=12,
+        leading=16,
+        leftIndent=20,
+        bulletIndent=10,
+        spaceAfter=6,
+    )
+
+    lines = notes_text.splitlines()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            story.append(Spacer(1, 8))
+            continue
+
+        if line.startswith("##"):
+            story.append(Paragraph(line.replace("##", "").strip(), heading_style))
+        elif re.match(r"^[-*]\s+", line):
+            story.append(Paragraph("• " + line[2:].strip(), bullet_style))
+        elif re.match(r"^\d+\.\s+", line):
+            story.append(Paragraph(line.strip(), bullet_style))
+        else:
+            story.append(Paragraph(line, body_style))
+
+    doc.build(story)
     return output_path
 
-# --- Export Notes to DOCX ---
+
+# --- Export Notes to DOCX (Enhanced) ---
 def export_to_docx(notes_text, output_path):
+    """
+    Enhanced DOCX export – supports markdown-like structure (##, -, 1.)
+    """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     doc = Document()
+
     if isinstance(notes_text, str):
         lines = notes_text.split("\n")
     else:
         lines = list(notes_text)
+
     for line in lines:
-        doc.add_paragraph(str(line))
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        line = line.strip()
+        if not line:
+            doc.add_paragraph("")  # blank line for spacing
+            continue
+
+        if line.startswith("##"):
+            doc.add_heading(line.replace("##", "").strip(), level=2)
+        elif re.match(r"^[-*]\s+", line):
+            doc.add_paragraph(line[2:].strip(), style="List Bullet")
+        elif re.match(r"^\d+\.\s+", line):
+            doc.add_paragraph(line.strip(), style="List Number")
+        else:
+            doc.add_paragraph(line)
+
     doc.save(output_path)
     return output_path
+
 
 # --- Extract Audio from Video ---
 def extract_audio_from_video(video_path, output_path, duration=120):
@@ -120,29 +167,29 @@ def extract_audio_from_video(video_path, output_path, duration=120):
 
     return output_path
 
+
 # --- Translation helper (uses googletrans, fallback to identity) ---
-def translate_text(text, src='auto', target='en'):
+def translate_text(text, src="auto", target="en"):
     """
     Translate `text` to target language. Uses googletrans if installed.
     Returns translated text or original text on failure.
     """
     try:
         from googletrans import Translator
+
         translator = Translator()
-        # googletrans can fail for long texts at once; be conservative
-        # chunk by 5000 chars
         if len(text) <= 4500:
             return translator.translate(text, src=src, dest=target).text
         out = []
         start = 0
         while start < len(text):
-            chunk = text[start:start+4500]
+            chunk = text[start : start + 4500]
             out.append(translator.translate(chunk, src=src, dest=target).text)
             start += 4500
         return "\n".join(out)
     except Exception:
-        # translator not available or failed -> return original
         return text
+
 
 # --- Token/text optimizer (heuristic) ---
 def optimize_for_tokens(text, max_tokens=3000):
@@ -157,14 +204,12 @@ def optimize_for_tokens(text, max_tokens=3000):
         return text
 
     ratio = max_tokens / approx_tokens
-    max_chars = max(200, int(len(text) * ratio))  # ensure some minimum
+    max_chars = max(200, int(len(text) * ratio))
     cut = text[:max_chars]
-    # try to cut at last sentence end
-    last_dot = max(cut.rfind('.'), cut.rfind('!\n'), cut.rfind('?\n'))
+    last_dot = max(cut.rfind("."), cut.rfind("!\n"), cut.rfind("?\n"))
     if last_dot and last_dot > int(0.5 * max_chars):
-        return cut[:last_dot+1]
-    # fallback: cut at last newline
-    last_nl = cut.rfind('\n')
+        return cut[: last_dot + 1]
+    last_nl = cut.rfind("\n")
     if last_nl and last_nl > 0:
         return cut[:last_nl]
     return cut
