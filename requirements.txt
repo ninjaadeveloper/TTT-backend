@@ -84,7 +84,7 @@ python-docx==1.2.0
 python-dotenv==1.0.1
 python-jose==3.5.0
 pytz==2024.2
-pywin32==306
+#pywin32==306
 redis==6.4.0
 reportlab==4.4.4
 requests==2.32.3
@@ -104,7 +104,7 @@ threadpoolctl==3.6.0
 tqdm==4.67.1
 typing-inspection==0.4.1
 typing_extensions==4.15.0
-tzdata==2025.2
+tzdata==2025.2f
 uritemplate==4.2.0
 urllib3==2.5.0
 vine==5.1.0
