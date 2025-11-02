@@ -3,11 +3,10 @@ import re
 import requests
 from docx import Document
 from docx.shared import Pt
-from moviepy.editor import VideoFileClip
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -24,7 +23,8 @@ def ensure_font():
     os.makedirs(FONT_DIR, exist_ok=True)
     if not os.path.exists(FONT_PATH):
         print("🔽 Downloading NotoSans.ttf ...")
-        url = "https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf"
+        url = ("https://github.com/google/fonts/raw/main/ofl/notosans/"
+               "NotoSans%5Bwdth,wght%5D.ttf")
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         with open(FONT_PATH, "wb") as f:
@@ -35,10 +35,12 @@ def ensure_font():
 # --- Export Notes to PDF (Enhanced) ---
 def export_to_pdf(notes_text, output_path):
     """
-    Enhanced PDF export – supports ## headings, - bullets, numbered lists, and normal text.
+    Enhanced PDF export – supports ## headings, - bullets,
+    numbered lists, and normal text.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))  # Unicode safe
+    ensure_font()  # Ensure NotoSans font is available
+    pdfmetrics.registerFont(TTFont("NotoSans", FONT_PATH))
 
     doc = SimpleDocTemplate(
         output_path,
@@ -55,7 +57,7 @@ def export_to_pdf(notes_text, output_path):
     heading_style = ParagraphStyle(
         "Heading",
         parent=styles["Heading2"],
-        fontName="HeiseiMin-W3",
+        fontName="NotoSans",
         fontSize=14,
         leading=18,
         spaceAfter=10,
@@ -65,7 +67,7 @@ def export_to_pdf(notes_text, output_path):
     body_style = ParagraphStyle(
         "Body",
         parent=styles["Normal"],
-        fontName="HeiseiMin-W3",
+        fontName="NotoSans",
         fontSize=12,
         leading=16,
         spaceAfter=8,
@@ -74,7 +76,7 @@ def export_to_pdf(notes_text, output_path):
     bullet_style = ParagraphStyle(
         "Bullet",
         parent=styles["Normal"],
-        fontName="HeiseiMin-W3",
+        fontName="NotoSans",
         fontSize=12,
         leading=16,
         leftIndent=20,
@@ -91,7 +93,8 @@ def export_to_pdf(notes_text, output_path):
             continue
 
         if line.startswith("##"):
-            story.append(Paragraph(line.replace("##", "").strip(), heading_style))
+            story.append(Paragraph(line.replace("##", "").strip(),
+                                   heading_style))
         elif re.match(r"^[-*]\s+", line):
             story.append(Paragraph("• " + line[2:].strip(), bullet_style))
         elif re.match(r"^\d+\.\s+", line):
@@ -141,6 +144,8 @@ def extract_audio_from_video(video_path, output_path, duration=120):
     Extract first `duration` seconds of audio from a video (e.g. MP4).
     Save as .mp3 file.
     """
+    from moviepy.editor import VideoFileClip
+
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
 
@@ -183,7 +188,7 @@ def translate_text(text, src="auto", target="en"):
         out = []
         start = 0
         while start < len(text):
-            chunk = text[start : start + 4500]
+            chunk = text[start:start + 4500]
             out.append(translator.translate(chunk, src=src, dest=target).text)
             start += 4500
         return "\n".join(out)
@@ -195,7 +200,8 @@ def translate_text(text, src="auto", target="en"):
 def optimize_for_tokens(text, max_tokens=3000):
     """
     Heuristic to reduce text length to approximately max_tokens.
-    Approx tokens = chars/4 (simple estimate). Tries to cut at sentence boundary.
+    Approx tokens = chars/4 (simple estimate).
+    Tries to cut at sentence boundary.
     """
     if not text:
         return text
