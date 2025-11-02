@@ -201,7 +201,7 @@ def process_upload(upload_id, file_path_or_url, user_id, language="auto", is_url
 
         # 6️⃣ Save result to DB
         note_doc = {
-            "user_id": user_id,
+            "user_id": str(user_id),
             "upload_id": upload_id,
             "raw_transcript": transcript,
             "translated_transcript": translated if translated != transcript else None,
