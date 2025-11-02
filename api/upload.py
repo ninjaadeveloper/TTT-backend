@@ -99,6 +99,7 @@ def download_audio_from_url(url: str):
 @bp.route("/upload", methods=["POST"])
 def upload_file():
     user_id = get_user_from_auth()
+    print(f"🧠 [UPLOAD DEBUG] user_id from JWT: {user_id}")
     f = request.files.get("file")
     url = request.form.get("url") or (request.json.get("url") if request.is_json else None)
     print("📥 Received:", f, url)
@@ -170,7 +171,7 @@ def upload_file():
     # ---------------- insert upload info into Mongo ----------------
     uploads.insert_one({
         "_id": uid,
-        "user_id": user_id,
+        "user_id": str(user_id),
         "filename": filename,
         "upload_url": upload_url,
         "status": "uploaded",

@@ -20,7 +20,7 @@ def create_token(user_id):
 @bp.route('/register', methods=['POST'])
 def register():
     data = request.json or {}
-
+    print("📩 Incoming registration data:", data)
     required = ["name", "email", "phone", "password"]
     if not all(field in data for field in required):
         return jsonify({"error": "Missing required fields"}), 400
