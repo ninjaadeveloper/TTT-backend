@@ -1,7 +1,0 @@
-{
-  "dependencies": {
-    "@tailwindcss/typography": "^0.5.16",
-    "docx": "^9.5.1",
-    "pdf-lib": "^1.17.1"
-  }
-}
